@@ -11,7 +11,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["https://inspiring-pastelito-6baeac.netlify.app", "http://localhost:5000", "*"])
 
 # ══════════════════════════════════════════════════════════════════
 # CONFIGURATION
