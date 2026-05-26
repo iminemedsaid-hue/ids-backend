@@ -11,7 +11,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 app = Flask(__name__)
-CORS(app, origins=["https://inspiring-pastelito-6baeac.netlify.app", "http://127.0.0.1:5000"])
+CORS(app, origins="*")
 
 @app.after_request
 def after_request(response):
