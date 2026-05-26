@@ -19,17 +19,16 @@ def after_request(response):
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     return response
-
 # ══════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════
 
+# Ton repo Hugging Face
 HF_REPO_ID = "saidimn/ids-cnn-cicids2017"
+
+# Dossier local pour stocker les modèles téléchargés
 CACHE_DIR = Path(__file__).parent / "model_cache"
 CACHE_DIR.mkdir(exist_ok=True)
-
-# Device
-device = torch.device('cpu')  # Force CPU pour économiser la mémoire
 
 # ══════════════════════════════════════════════════════════════════
 # ARCHITECTURES CNN-1D
@@ -91,16 +90,8 @@ class CNN1D_Attack(nn.Module):
         return self.classifier(self.features(x.unsqueeze(1)))
 
 # ══════════════════════════════════════════════════════════════════
-# LAZY LOADING - Chargement différé des modèles
+# TÉLÉCHARGEMENT DES MODÈLES DEPUIS HUGGING FACE
 # ══════════════════════════════════════════════════════════════════
-
-models_loaded = False
-scaler = None
-le = None
-binary_model = None
-attack_model = None
-num_features = None
-num_attack_classes = None
 
 def download_models():
     """Télécharge les modèles depuis Hugging Face Hub"""
@@ -112,7 +103,10 @@ def download_models():
     }
     
     paths = {}
-    print("Downloading models from Hugging Face...")
+    print("=" * 50)
+    print("Téléchargement des modèles depuis Hugging Face...")
+    print("=" * 50)
+    
     for key, filename in files.items():
         print("  ↓ " + filename)
         paths[key] = hf_hub_download(
@@ -126,43 +120,37 @@ def download_models():
     
     return paths
 
-def load_models():
-    """Charge les modèles en mémoire (une seule fois)"""
-    global models_loaded, scaler, le, binary_model, attack_model, num_features, num_attack_classes
-    
-    if models_loaded:
-        return
-    
-    print("=" * 50)
-    print("Loading models into memory...")
-    print("=" * 50)
-    
-    paths = download_models()
-    
-    scaler = joblib.load(paths["scaler"])
-    le = joblib.load(paths["encoder"])
-    
-    num_features = scaler.n_features_in_
-    num_attack_classes = len(le.classes_)
-    
-    print("Features: " + str(num_features))
-    print("Classes: " + str(list(le.classes_)))
-    
-    # Charge les modèles un par un pour économiser la mémoire
-    print("Loading binary model...")
-    binary_model = CNN1D_Binary(num_features).to(device)
-    binary_model.load_state_dict(torch.load(paths["binary"], map_location=device, weights_only=True))
-    binary_model.eval()
-    print("  ✓ Binary model loaded")
-    
-    print("Loading attack model...")
-    attack_model = CNN1D_Attack(num_features, num_attack_classes).to(device)
-    attack_model.load_state_dict(torch.load(paths["attack"], map_location=device, weights_only=True))
-    attack_model.eval()
-    print("  ✓ Attack model loaded")
-    
-    models_loaded = True
-    print("All models loaded ✓\n")
+# Télécharge au démarrage du serveur
+paths = download_models()
+print("=" * 50)
+
+# ══════════════════════════════════════════════════════════════════
+# CHARGEMENT DES MODÈLES EN MÉMOIRE
+# ══════════════════════════════════════════════════════════════════
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print("Device: " + str(device))
+
+scaler = joblib.load(paths["scaler"])
+le = joblib.load(paths["encoder"])
+
+num_features = scaler.n_features_in_
+num_attack_classes = len(le.classes_)
+
+print("Features: " + str(num_features))
+print("Classes: " + str(list(le.classes_)))
+
+# Modèle binaire
+binary_model = CNN1D_Binary(num_features).to(device)
+binary_model.load_state_dict(torch.load(paths["binary"], map_location=device, weights_only=True))
+binary_model.eval()
+
+# Modèle d'attaque
+attack_model = CNN1D_Attack(num_features, num_attack_classes).to(device)
+attack_model.load_state_dict(torch.load(paths["attack"], map_location=device, weights_only=True))
+attack_model.eval()
+
+print("Tous les modèles sont chargés ✓\n")
 
 # ══════════════════════════════════════════════════════════════════
 # PRÉTRAITEMENT
@@ -241,9 +229,6 @@ def preprocess(df):
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    # Charge les modèles si pas encore chargés
-    load_models()
-    
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
 
@@ -302,7 +287,7 @@ def health():
         'status': 'ok',
         'device': str(device),
         'repo': HF_REPO_ID,
-        'models_loaded': models_loaded
+        'attack_classes': le.classes_.tolist()
     })
 
 if __name__ == '__main__':
